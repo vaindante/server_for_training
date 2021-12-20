@@ -20,6 +20,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy import select, insert
+from starlette.responses import RedirectResponse
 
 from config import config
 from models import (
@@ -87,6 +88,11 @@ async def unicorn_exception_handler(request: Request, exc: UnicornException):
     )
 
 
+@app.get('/')
+async def docs():
+    return RedirectResponse(url='/docs')
+
+
 @app.on_event("startup")
 async def startup():
     await database.connect()
@@ -147,7 +153,7 @@ async def create_user(user: UserCreateRequest, username: str = Depends(get_curre
             insert(Users).values(
                 name=user.name,
                 email=user.email,
-                created_by=1,
+                created_by=username,
                 created_at=datetime.now()
             ).returning(*Users.__table__.c.values())
         )
