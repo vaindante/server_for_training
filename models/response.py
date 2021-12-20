@@ -1,7 +1,6 @@
 from datetime import datetime
 from typing import List
 
-from hamcrest.core import description
 from pydantic import BaseModel, EmailStr
 
 
