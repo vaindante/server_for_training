@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import List
 
+from hamcrest.core import description
 from pydantic import BaseModel, EmailStr
 
 
@@ -20,3 +21,26 @@ class UsersResponse(BaseModel):
 class UserCreateRequest(BaseModel):
     email: EmailStr
     name: str
+
+
+class BookLink(BaseModel):
+    id: int
+    name: str
+
+
+class Book(BookLink):
+    description: str = ''
+    added_at: datetime = None
+
+
+class Books(BaseModel):
+    user_id: int
+    user_name: str
+    books: List[Book]
+    page_size: int = 10
+    page_number: int = 0
+
+
+class LinkBooksForUser(BaseModel):
+    user_id: int
+    book_ids: List[BookLink]
