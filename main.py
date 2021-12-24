@@ -1,6 +1,7 @@
 import logging
 import secrets
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 import databases
@@ -44,6 +45,11 @@ log.addHandler(stream)
 log.setLevel(logging.INFO)
 
 security = HTTPBasic()
+
+
+class Types(Enum):
+    json = 'application/json'
+    xml = 'application/xml'
 
 
 class UnicornException(Exception):
@@ -135,14 +141,14 @@ async def read_root(
 
 
 @app.get('/users/{user_id}', response_model=UserResponse)
-async def get_user(user_id: int, content_type: Optional[str] = Header(None)):
+async def get_user(user_id: int, accept_type: Optional[str] = Header(Types)):
     return _response(
         UserResponse(
             **(await database.fetch_one(
                 select(Users).where(Users.id == user_id)
             ))
         ),
-        content_type
+        accept_type
     )
 
 
@@ -164,12 +170,18 @@ async def create_user(user: UserCreateRequest, username: str = Depends(get_curre
 
 
 @app.get('/users/{user_id}/books', response_model=Books)
-async def get_user_books(user_id: int, content_type: Optional[str] = Header(None)):
+async def get_user_books(
+        user_id: int,
+        accept_type: Optional[str] = Header(Types)):
     pass
 
 
 @app.get('users/users/{user_id}/books/{book_id}', response_model=Book)
-async def get_user_book(self, user_id: int, book_id: int, content_type: Optional[str] = Header(None)):
+async def get_user_book(
+        user_id: int,
+        book_id: int,
+        accept_type: Optional[str] = Header(Types)
+):
     pass
 
 
