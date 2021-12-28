@@ -1,8 +1,10 @@
+import csv
+import io
 import logging
 import secrets
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Union, Any, Dict
 
 import databases
 from asyncpg import UniqueViolationError
@@ -16,12 +18,11 @@ from fastapi import (
     Request,
     Depends,
     HTTPException,
-    Query
+    Query,
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy import select, insert
-from starlette.responses import RedirectResponse
 
 from config import config
 from models import (
@@ -33,10 +34,11 @@ from models import (
     Books,
     LinkBooksForUser,
 )
+from swagger import tags, users_responses
 
 database = databases.Database(config.db_url)
 
-app = FastAPI()
+app = FastAPI(openapi_tags=tags)
 
 log = logging.getLogger('API')
 stream = logging.StreamHandler()
@@ -47,9 +49,15 @@ log.setLevel(logging.INFO)
 security = HTTPBasic()
 
 
-class Types(Enum):
+class Types(str, Enum):
     json = 'application/json'
     xml = 'application/xml'
+
+
+class UserTypes(str, Enum):
+    json = 'application/json'
+    xml = 'application/xml'
+    csv = 'text/csv'
 
 
 class UnicornException(Exception):
@@ -71,18 +79,34 @@ def get_current_username(credentials: HTTPBasicCredentials = Depends(security)):
     return credentials.username
 
 
-def convert_to_xml(model):
+def convert_to_xml(model, custom_root=''):
     if getattr(model, '__root__', None):
         model = [m.dict() for m in model.__root__]
     else:
         model = model.dict()
-    return dicttoxml(model, custom_root=model.__class__.__name__, attr_type=False)
+    return dicttoxml(
+        model,
+        custom_root=custom_root or model.__class__.__name__,
+        attr_type=True,
+        # ids=True
+    )
 
 
-def _response(result, type_='application/json'):
+def _response(result, type_: UserTypes = Types.json, custom_root=''):
     log.debug('result: %s', result)
-    if type_ == 'application/xml':
-        return Response(content=convert_to_xml(result), media_type=type_)
+    if type_ == Types.xml:
+        return Response(content=convert_to_xml(result, custom_root=custom_root), media_type=type_)
+    if type_ == UserTypes.csv:
+        result = [m.dict() for m in result.__root__]
+        file = io.StringIO()
+        dict_writer = csv.DictWriter(file, result[0].keys(), dialect='excel')
+        dict_writer.writeheader()
+        dict_writer.writerows(result)
+
+        response = StreamingResponse(iter([file.getvalue()]), media_type="text/csv")
+        response.headers["Content-Disposition"] = "attachment; filename=export.csv"
+        return response
+
     return result
 
 
@@ -94,7 +118,7 @@ async def unicorn_exception_handler(request: Request, exc: UnicornException):
     )
 
 
-@app.get('/')
+@app.get('/', include_in_schema=False)
 async def docs():
     return RedirectResponse(url='/docs')
 
@@ -109,7 +133,7 @@ async def shutdown():
     await database.disconnect()
 
 
-@app.get('/new_users')
+@app.get('/new_users', include_in_schema=False, tags=['User'])
 async def new_users():
     faker = Faker(locale='ru-Ru')
     values = [
@@ -128,31 +152,36 @@ async def new_users():
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={'error': e.__name__})
 
 
-@app.get("/users", response_model=UsersResponse)
+@app.get(
+    "/users",
+    response_model=Union[UsersResponse, Dict[str, Any], str],
+    tags=['User'],
+    responses=users_responses
+)
 async def read_root(
         offset: int = 0,
         limit: int = Query(default=10, lte=50),
-        content_type: Optional[str] = Header(None)
+        accept: UserTypes = Header(UserTypes.json)
 ):
     users = UsersResponse.parse_obj(
         await database.fetch_all(select(Users).offset(offset).limit(limit))
     )
-    return _response(users, content_type)
+    return _response(users, accept, custom_root='Users')
 
 
-@app.get('/users/{user_id}', response_model=UserResponse)
-async def get_user(user_id: int, accept_type: Optional[str] = Header(Types)):
+@app.get('/users/{user_id}', response_model=UserResponse, tags=['User'])
+async def get_user(user_id: int, accept: Types = Header(Types.json)):
     return _response(
         UserResponse(
             **(await database.fetch_one(
                 select(Users).where(Users.id == user_id)
             ))
         ),
-        accept_type
+        accept
     )
 
 
-@app.post('/users', response_model=UserResponse)
+@app.post('/users', response_model=Union[UserResponse], tags=['User'])
 async def create_user(user: UserCreateRequest, username: str = Depends(get_current_username)):
     try:
         result = await database.fetch_one(
@@ -169,23 +198,23 @@ async def create_user(user: UserCreateRequest, username: str = Depends(get_curre
     return UserResponse.parse_obj(result)
 
 
-@app.get('/users/{user_id}/books', response_model=Books)
+@app.get('/users/{user_id}/books', response_model=Books, tags=['Books'])
 async def get_user_books(
         user_id: int,
-        accept_type: Optional[str] = Header(Types)):
+        accept: Types = Header(Types.json)):
     pass
 
 
-@app.get('users/users/{user_id}/books/{book_id}', response_model=Book)
+@app.get('users/users/{user_id}/books/{book_id}', response_model=Book, tags=['Books'])
 async def get_user_book(
         user_id: int,
         book_id: int,
-        accept_type: Optional[str] = Header(Types)
+        accept: Types = Header(Types.json)
 ):
     pass
 
 
-@app.post('/users/{user_id}/books/{book_id}', response_model=Book)
+@app.post('/users/{user_id}/books/{book_id}', response_model=Book, tags=['Books'])
 async def add_book_touser(
         user_id: int,
         book_id: int,
